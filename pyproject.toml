@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "multi-quadrotor-formation"
+name = "multi-quadropter-formation"
 version = "2024.4.0"
 dependencies = [
   "pettingzoo",
@@ -21,7 +21,7 @@ maintainers = [
 description = "Lovely Spam! Wonderful Spam!"
 readme = "README.md"
 license = {file = "LICENSE"}
-keywords = ["multi-agent", "quadrotor", "environment", "formation", "pattern"]
+keywords = ["multi-agent", "quadcopter", "environment", "formation", "pattern"]
 
 [tool.mypy]
 ignore_missing_imports = true

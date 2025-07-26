@@ -10,7 +10,7 @@ from .motor import Motor
 from .pid import PID
 
 
-class Quadrotor:
+class Quadcopter:
     """
     DRONE CONTROL
         -------------------------

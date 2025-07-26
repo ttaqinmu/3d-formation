@@ -7,7 +7,7 @@ import pybullet_data
 from pybullet_utils import bullet_client
 from typing import Union
 
-from .drone import DroneClass, Quadrotor
+from .drone import DroneClass, Quadcopter
 
 
 class Aviary(bullet_client.BulletClient):
@@ -125,7 +125,7 @@ class Aviary(bullet_client.BulletClient):
             self.drone_type,
         ):
             self.drones.append(
-                Quadrotor(
+                Quadcopter(
                     self,
                     start_pos=start_pos,
                     start_orn=start_orn,
