@@ -7,50 +7,19 @@ import pybullet_data
 from pybullet_utils import bullet_client
 from typing import Union
 
-from .drone import DroneClass, Quadcopter
+from .quadcopter import Quadcopter
 
 
 class Aviary(bullet_client.BulletClient):
-    """Aviary class, the core of how PyFlyt handles UAVs in the PyBullet simulation environment.
-
-    The `aviary` is a handler for physics stepping, setpoint handling, collisions tracking, and much more.
-    It provides a common endpoint from where users may control drones or define tasks.
-
-    Args:
-        start_pos (np.ndarray): an `(n, 3)` array for the starting X, Y, Z positions for each drone.
-        start_orn (np.ndarray): an `(n, 3)` array for the starting orientations for each drone, in terms of Euler angles.
-        render (bool): a boolean whether to render the simulation.
-        physics_hz (int): physics looprate (not recommended to be changed).
-        world_scale (float): how big to spawn the floor.
-        seed (None | int): optional int for seeding the simulation RNG.
-    """
 
     def __init__(
         self,
         start_pos: np.ndarray,
         start_orn: np.ndarray,
         render: bool = False,
-        physics_hz: int = 240,
-        world_scale: float = 1.0,
-        seed: None | int = None,
     ):
-        """Initializes a PyBullet environment that hosts UAVs and other entities.
-
-        The Aviary class itself inherits from a BulletClient, so any function that a PyBullet client has, this class will have.
-        The Aviary also handles dealing with physics and control looprates, as well as automatic construction of several default UAVs and their corresponding cameras.
-
-        Args:
-            start_pos (np.ndarray): an `(n, 3)` array for the starting X, Y, Z positions for each drone.
-            start_orn (np.ndarray): an `(n, 3)` array for the starting orientations for each drone, in terms of Euler angles.
-            render (bool): a boolean whether to render the simulation.
-            physics_hz (int): physics looprate (not recommended to be changed).
-            world_scale (float): how big to spawn the floor.
-            seed (None | int): optional int for seeding the simulation RNG.
-        """
         super().__init__(p.GUI if render else p.DIRECT)
-        print("\033[A                             \033[A")
 
-        # check for starting position and orientation shapes
         assert (
             len(start_pos.shape) == 2
         ), f"start_pos must be shape (n, 3), currently {start_pos.shape}."
@@ -61,19 +30,15 @@ class Aviary(bullet_client.BulletClient):
             start_orn.shape == start_pos.shape
         ), f"start_orn must be same shape as start_pos, currently {start_orn.shape}."
 
-        # check the physics hz
-        if physics_hz != 240.0:
-            warn(
-                f"Physics_hz is currently {physics_hz}, not the 240.0 that is recommended by pybullet. There may be physics errors."
-            )
-
+        world_scale = 1.0
+        
+        physics_hz = 240
+        
         # constants
         self.num_drones = start_pos.shape[0]
         self.start_pos = start_pos
         self.start_orn = start_orn
 
-        # do not change because pybullet doesn't like it
-        # default physics looprate is 240 Hz
         self.physics_hz = physics_hz
         self.physics_period = 1.0 / physics_hz
 
@@ -87,14 +52,8 @@ class Aviary(bullet_client.BulletClient):
             text="RTF here", textPosition=[0, 0, 0], textColorRGB=[1, 0, 0]
         )
 
-        self.reset(seed)
 
     def reset(self, seed: None | int = None):
-        """Resets the simulation.
-
-        Args:
-            seed (None | int): seed
-        """
         self.resetSimulation()
         self.setGravity(0, 0, -9.81)
         self.physics_steps: int = 0
@@ -118,11 +77,10 @@ class Aviary(bullet_client.BulletClient):
         )
 
         # spawn drones
-        self.drones: list[DroneClass] = []
-        for start_pos, start_orn, drone_type in zip(
+        self.drones: list[Quadcopter] = []
+        for start_pos, start_orn in zip(
             self.start_pos,
             self.start_orn,
-            self.drone_type,
         ):
             self.drones.append(
                 Quadcopter(
@@ -134,12 +92,10 @@ class Aviary(bullet_client.BulletClient):
                 )
             )
 
-        # constants for tracking how many times to step depending on control hz
         all_control_hz = [int(1.0 / drone.control_period) for drone in self.drones]
         self.updates_per_step = int(self.physics_hz / np.min(all_control_hz))
         self.update_period = 1.0 / np.min(all_control_hz)
 
-        # sanity check the control looprates
         if len(all_control_hz) > 0:
             all_control_hz.sort()
             all_ratios = np.array(all_control_hz)[1:] / np.array(all_control_hz)[:-1]
@@ -147,25 +103,18 @@ class Aviary(bullet_client.BulletClient):
                 r % 1.0 == 0.0 for r in all_ratios
             ), "Looprates must form common multiples of each other."
 
-        # rtf tracking parameters
         self.now = time.time()
         self._frame_elapsed = 0.0
         self._sim_elapsed = 0.0
 
-        # arm everything
         self.register_all_new_bodies()
         self.set_armed(True)
 
-        # reset all drones and initialize required states
         [drone.reset() for drone in self.drones]
         [drone.update_state() for drone in self.drones]
         [drone.update_last() for drone in self.drones]
 
     def register_all_new_bodies(self):
-        """Registers all new bodies in the environment to be able to handle collisions later.
-
-        Call this when there is an update in the number of bodies in the environment.
-        """
         # the collision array is a scipy sparse, upper triangle array
         num_bodies = (
             np.max([self.getBodyUniqueId(i) for i in range(self.getNumBodies())]) + 1
@@ -231,15 +180,6 @@ class Aviary(bullet_client.BulletClient):
 
     @property
     def all_aux_states(self) -> list[np.ndarray]:
-        """Returns a list of auxiliary states for all drones in the environment.
-
-        This is a `num_drones` list of auxiliary states.
-
-        This function is not very optimized, if you want the aux state of a single drone, do `aux_state(i)`.
-
-        Returns:
-            np.ndarray: list of auxiliary states
-        """
         aux_states = []
         for drone in self.drones:
             aux_states.append(drone.aux_state)
@@ -247,7 +187,6 @@ class Aviary(bullet_client.BulletClient):
         return aux_states
 
     def print_all_bodies(self):
-        """Debugging function used to print out all bodies in the environment along with their IDs."""
         bodies = dict()
         for i in range(self.getNumBodies()):
             bodies[i] = self.getBodyInfo(i)[-1].decode("UTF-8")
@@ -257,11 +196,6 @@ class Aviary(bullet_client.BulletClient):
         pprint(bodies)
 
     def set_mode(self, flight_modes: int | list[int]):
-        """Sets the flight control mode of each drone in the environment.
-
-        Args:
-            flight_modes (int | list[int]): flight mode
-        """
         if isinstance(flight_modes, list):
             assert len(flight_modes) == len(
                 self.drones
@@ -291,7 +225,6 @@ class Aviary(bullet_client.BulletClient):
             drone.setpoint = setpoints[i]
 
     def step(self):
-        """Steps the environment, this automatically handles physics and control looprates, one step is equivalent to one control loop step."""
         # compute rtf if we're rendering
         if self.render:
             elapsed = time.time() - self.now
