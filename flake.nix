@@ -28,8 +28,8 @@
           
           pyright
           stdenv.cc.cc.lib
-
-          rerun
+	  
+	  # rerun
 
           cudatoolkit
           cudaPackages.cudnn
@@ -44,6 +44,8 @@
           export CUDA_HOME=${pkgs.cudatoolkit}
           export PYTORCH_NO_CUDA_MEMORY_CACHING=1
           export PYTORCH_NO_CUDA_BUILD=1
+
+          source .venv/bin/activate
         '';
       };
     };
