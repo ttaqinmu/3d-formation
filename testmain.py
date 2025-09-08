@@ -1,19 +1,21 @@
+import gymnasium
+from environment.multi_quadcopter_formation import MultiQuadcopterFormation
 import numpy as np
-from PyFlyt.core import Aviary
 
-start_pos = np.array([[0.0, 0.0, 1.0]])
-start_orn = np.array([[0.0, 0.0, 0.0]])
+env = MultiQuadcopterFormation.from_json("environment/formations/train_1.json")
+observations, infos = env.reset()
 
-# environment setup
-env = Aviary(start_pos=start_pos, start_orn=start_orn, render=True, drone_type="quadx")
 
-# set to position control
-env.set_mode(0)
+def gen_action(agent_idx, target_pos):
+    return np.insert(target_pos, 2, 0)
 
-action = np.array([0, 0, 0, 0])
 
-# simulate for 1000 steps (1000/120 ~= 8 seconds)
-for i in range(1000):
-    action += 1
-    env.set_setpoint(0, action)
-    env.step()
+while env.agents:
+    # this is where you would insert your policy
+    actions = {
+        agent: gen_action(i, env.target_pos[i]) for i, agent in enumerate(env.agents)
+    }
+
+    observations, rewards, terminations, truncations, infos = env.step(actions)
+
+env.close()

@@ -11,7 +11,7 @@ MarkupSafe==3.0.2
 mpmath==1.3.0
 networkx==3.5
 numba==0.61.2
-numpy==2.2.6
+numpy==1.26.4
 nvidia-cublas-cu12==12.6.4.1
 nvidia-cuda-cupti-cu12==12.6.80
 nvidia-cuda-nvrtc-cu12==12.6.77
@@ -32,9 +32,11 @@ pettingzoo==1.25.0
 pillow==11.3.0
 pyarrow==21.0.0
 pybullet==3.2.7
+PyFlyt==0.29.0
 pyvers==0.1.0
 PyYAML==6.0.2
-rerun-sdk==0.24.0
+rerun-sdk==0.23.4
+scipy==1.16.1
 setuptools==80.9.0
 sympy==1.14.0
 tensordict==0.9.1

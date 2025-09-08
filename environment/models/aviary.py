@@ -31,9 +31,9 @@ class Aviary(bullet_client.BulletClient):
         ), f"start_orn must be same shape as start_pos, currently {start_orn.shape}."
 
         world_scale = 1.0
-        
+
         physics_hz = 240
-        
+
         # constants
         self.num_drones = start_pos.shape[0]
         self.start_pos = start_pos
@@ -51,7 +51,6 @@ class Aviary(bullet_client.BulletClient):
         self.rtf_debug_line = self.addUserDebugText(
             text="RTF here", textPosition=[0, 0, 0], textColorRGB=[1, 0, 0]
         )
-
 
     def reset(self, seed: None | int = None):
         self.resetSimulation()
