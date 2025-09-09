@@ -52,7 +52,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
                 base_parsing_pos(data["targets"]) if data.get("targets") else None
             ),
             max_duration_seconds=data.get("max_duration_seconds", 60),
-            render=data.get("render", True),
+            render=data.get("render", False),
         )
 
     def __init__(
@@ -61,7 +61,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         target_pos: Optional[np.ndarray] = None,
         start_pos: Optional[np.ndarray] = None,
         max_duration_seconds: int = 60,
-        render: bool = True,
+        render: bool = False,
     ):
         if start_pos is None:
             start_pos = self.random_start_pos(num_targets)
