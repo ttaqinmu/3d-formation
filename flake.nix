@@ -29,6 +29,7 @@
         buildInputs = with pkgs; [
           (python.withPackages (ps: with ps; [
             pip
+            uv
           ]))
 
           pyright
@@ -41,10 +42,8 @@
         ] ++ extraLibs;
 
         shellHook = ''
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath extraLibs}
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath extraLibs}:${pkgs.cudatoolkit}/lib:${pkgs.cudaPackages.cudnn}/lib:${pkgs.cudaPackages.nccl}/lib:/run/opengl-driver/lib
           export CUDA_HOME=${pkgs.cudatoolkit}
-          export PYTORCH_NO_CUDA_MEMORY_CACHING=1
-          export PYTORCH_NO_CUDA_BUILD=1
 
           source .venv/bin/activate
         '';
