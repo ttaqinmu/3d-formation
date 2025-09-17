@@ -35,7 +35,9 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         return np.array(pos)
 
     @classmethod
-    def from_json(cls, json_path: str) -> "MultiQuadcopterFormation":
+    def from_json(cls, filename: str, control_mode: int=-1,default_render: Optional[str] = None) -> "MultiQuadcopterFormation":
+        file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), f"formations/{filename}")
+
         def base_parsing_pos(
             datas: List[List[float]],
         ) -> np.ndarray:
@@ -43,40 +45,17 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
                 [([d[0], d[1], d[2]]) for d in datas if isinstance(d, list)]
             )
 
-        data = json.load(open(json_path))
+        data = json.load(open(file_path))
         return cls(
+            control_mode=control_mode,
             starts_pos=np.array([(
-                base_parsing_pos(data["agents"]) if data.get("agents") else None
+                base_parsing_pos(data["agents"]) if data.get("agents") else cls.random_start_pos(10)
             )]),
             targets_pos=np.array([(
-                base_parsing_pos(data["targets"]) if data.get("targets") else None
+                base_parsing_pos(data["targets"]) if data.get("targets") else cls.random_target_pos(10)
             )]),
             max_duration_seconds=data.get("max_duration_seconds", 60),
-            render=data.get("render", False),
-        )
-
-    @classmethod
-    def for_training(cls) -> "MultiQuadcopterFormation":
-        def base_parsing_pos(
-            datas: List[List[float]],
-        ) -> np.ndarray:
-            return np.array(
-                [([d[0], d[1], d[2]]) for d in datas if isinstance(d, list)]
-            )
-        
-        targets_pos = []
-
-        for i in range(1, 6):
-            filename = f"formations/train_{i}.json"
-            file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), filename)
-            data = json.load(open(file_path))
-            targets_pos.append(base_parsing_pos(data["targets"]))
-
-        return cls(
-            starts_pos=None,
-            targets_pos=np.array(targets_pos),
-            max_duration_seconds=60,
-            render=False,
+            render=data.get("render") if data.get("render") else default_render,
         )
 
     def get_random_pos(self):
@@ -91,16 +70,22 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
     def __init__(
         self,
         num_targets: int = 10,
+        control_mode: int = -1,
         targets_pos: Optional[np.ndarray] = None,
         starts_pos: Optional[np.ndarray] = None,
         max_duration_seconds: int = 60,
-        render: bool = False,
+        render: Optional[str] = None,
     ):
+        self.control_mode = control_mode
         if starts_pos is None:
             self.starts_pos = np.array([self.random_start_pos(num_targets)])
+        else:
+            self.starts_pos = starts_pos
 
         if targets_pos is None:
             self.targets_pos = np.array([self.random_target_pos(num_targets)])
+        else:
+            self.targets_pos = targets_pos
 
         self.target_pos, self.start_pos = self.get_random_pos()
 
@@ -109,12 +94,12 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         super().__init__(
             start_pos=self.start_pos,
             start_orn=np.zeros((self.start_pos.shape[0], 3)),
-            flight_mode=-1,
+            flight_mode=control_mode,
             flight_dome_size=30,
             max_duration_seconds=max_duration_seconds,
             angle_representation="euler",
             agent_hz=40,
-            render_mode="human" if render else None,
+            render_mode=render,
         )
 
         self.sparse_reward = False
@@ -250,7 +235,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         self.setup_gui()
 
         self.aviary.register_all_new_bodies()
-        self.aviary.set_mode(-1)
+        self.aviary.set_mode(self.control_mode)
 
         for _ in range(10):
             self.aviary.step()
@@ -315,7 +300,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         for target_index, target in enumerate(self.target_pos):
             dist = np.linalg.norm(agent_pos - target)
 
-            if dist <= 0.01:
+            if dist <= 0.1:
                 self.agent_info[agent_id]["reached"] = True
                 self.target_info[target_index]["reached"] = True
 
@@ -353,34 +338,55 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
             term |= True
             info["all_targets_reached"] = True
 
+        # Target reached
+        if self.agent_info[agent_id]["reached_target"]:
+            reward += 20
+            info["target_reached"] = True
+
         # Delta position
-        reward += 10.0 * (1.0 - np.tanh(self.agent_info[agent_id]["distance_to_target"].min()))  # type: ignore
+        d = self.agent_info[agent_id]["distance_to_target"].min()   # type: ignore
+        delta_position = 10.0 * np.exp(-d)
+        reward += delta_position
 
         # Approach same target as another agent
         nearest_target_id = self.agent_info[agent_id]["nearest_target_id"]
         if nearest_target_id is not None:
             if self.target_info[nearest_target_id]["nearest_agent_id"] != agent_id:
-                reward -= 1.0
+                reward -= 5.0
                 info["crowding"] = True
 
         # Collision
         if np.any(self.aviary.contact_array[self.aviary.drones[agent_id].Id]):
-            reward -= 5.0
+            reward -= 20.0
             info["collision"] = True
 
         # Exceed flight dome
         if np.linalg.norm(self.aviary.state(agent_id)[-1]) > self.flight_dome_size:
-            reward -= 10.0
+            reward -= 20.0
             info["out_of_bounds"] = True
-            term |= True
+
+        # Shared team reward
+        team_progress = np.mean([t["distance_to_target"] for t in self.agent_info]) # type: ignore
+        reward += 2.0 * (1.0 - np.tanh(team_progress))
+
+        # Time penalty
+        # reward -= 0.01 * self.step_count
 
         return term, trunc, reward, info
+
+    def clip_control(self, action):
+        if self.control_mode == 7:
+            return np.clip(action, -30, 30)
+        elif self.control_mode == -1:
+            return np.clip(action, -1, 1)
+        else:
+            return action
 
     def step(self, actions: Any):   # type: ignore
         if not isinstance(actions, dict):
             if len(actions) == 1:
                 actions = np.array(actions[0])
-            actions = {ag: np.clip(actions[i], -1, 1) for i, ag in enumerate(self.agents)}
+            actions = {ag: self.clip_control(actions[i]) for i, ag in enumerate(self.agents)}
 
         observations, rewards, terminations, truncations, infos = self._step(actions)
 
@@ -431,8 +437,10 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
                 # compute observations
                 observations[ag] = self.compute_observation_by_id(ag_id)
 
-        # increment step count and cull dead agents for the next round
         self.step_count += 1
 
         return observations, rewards, terminations, truncations, infos
+
+    def render(self, conf):
+        pass
 

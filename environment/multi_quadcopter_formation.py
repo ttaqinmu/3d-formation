@@ -74,7 +74,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         super().__init__(
             start_pos=start_pos,
             start_orn=np.zeros((start_pos.shape[0], 3)),
-            flight_mode=0,
+            flight_mode=7,
             flight_dome_size=30,
             max_duration_seconds=max_duration_seconds,
             angle_representation="euler",
@@ -187,7 +187,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         # self.aviary.drones[1].set_mode(7)
         # self.aviary.drones[0].set_mode(7)
         # setpoint = np.array([0.0, 0.0, 0.0, 1.5])
-        # self.aviary.set_setpoint(0, setpoint)
+        # self.aviary.set_setpoint(0, self.target_pos[0])
 
         for _ in range(10):
             self.aviary.step()
@@ -277,16 +277,12 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         2. obstacle avoidance
         3. resource consumption
         """
-        # initialize
         reward = 0.0
         term = False
         trunc = self.step_count > self.max_steps
         info = dict()
 
         self.update_agent_info(agent_id)
-
-        # print(self.agent_info)
-        # print(self.target_info)
 
         # All targets reached
         if all(t["reached"] for t in self.target_info):
@@ -306,12 +302,12 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
 
         # Collision
         if np.any(self.aviary.contact_array[self.aviary.drones[agent_id].Id]):
-            reward -= 50.0
+            reward -= 10.0
             info["collision"] = True
 
         # Exceed flight dome
         if np.linalg.norm(self.aviary.state(agent_id)[-1]) > self.flight_dome_size:
-            reward -= 100.0
+            reward -= 20.0
             info["out_of_bounds"] = True
             term |= True
 

@@ -14,6 +14,8 @@ from benchmarl.environments.common import Task, TaskClass
 
 from benchmarl.utils import DEVICE_TYPING
 
+from .quadcopter_formation_env.multi_quadcopter_formation import MultiQuadcopterFormation
+
 
 class PettingZooClass(TaskClass):
     def get_env_fun(
@@ -24,6 +26,10 @@ class PettingZooClass(TaskClass):
         device: DEVICE_TYPING,
     ) -> Callable[[], EnvBase]:
         config = copy.deepcopy(self.config)
+        
+        if config["task"] == "quadcopter_formation":
+            return lambda: MultiQuadcopterFormation.from_json(**config)
+
         if self.supports_continuous_actions() and self.supports_discrete_actions():
             config.update({"continuous_actions": continuous_actions})
         return lambda: PettingZooEnv(
@@ -49,6 +55,7 @@ class PettingZooClass(TaskClass):
             "SIMPLE_SPREAD",
             "SIMPLE_TAG",
             "SIMPLE_WORLD_COMM",
+            "QUADCOPTER_FORMATION",
         }:
             return True
         return False
@@ -79,6 +86,7 @@ class PettingZooClass(TaskClass):
             "SIMPLE_SPREAD",
             "SIMPLE_TAG",
             "SIMPLE_WORLD_COMM",
+            "QUADCOPTER_FORMATION",
         }:
             return True
         return False
@@ -155,6 +163,7 @@ class PettingZooTask(Task):
     SIMPLE_SPREAD = None
     SIMPLE_TAG = None
     SIMPLE_WORLD_COMM = None
+    QUADCOPTER_FORMATION = None
 
     @staticmethod
     def associated_class():

@@ -1,0 +1,2 @@
+task: "auto_switch"
+json_path: "benchmarl/environments/multiquadcopter_formation/formations/train_1.json"

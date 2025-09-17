@@ -1,0 +1,2 @@
+task: "quadcopter_formation"
+json_path: "train_1.json"

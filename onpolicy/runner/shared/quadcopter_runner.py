@@ -93,18 +93,7 @@ class QuadcopterRunner(Runner):
         rnn_states = np.array(np.split(_t2n(rnn_states), self.n_rollout_threads))
         rnn_states_critic = np.array(np.split(_t2n(rnn_states_critic), self.n_rollout_threads))
         
-        # rearrange action
-        if self.envs.action_space(0).__class__.__name__ == 'MultiDiscrete':
-            for i in range(self.envs.action_space(0).shape):
-                uc_actions_env = np.eye(self.envs.action_space(0).high[i] + 1)[actions[:, :, i]]
-                if i == 0:
-                    actions_env = uc_actions_env
-                else:
-                    actions_env = np.concatenate((actions_env, uc_actions_env), axis=2)
-        elif self.envs.action_space(0).__class__.__name__ == 'Discrete':
-            actions_env = np.squeeze(np.eye(self.envs.action_space(0).n)[actions], 2)
-        else:
-            actions_env = actions
+        actions_env = actions
 
         return values, actions, action_log_probs, rnn_states, rnn_states_critic, actions_env
 
@@ -135,6 +124,47 @@ class QuadcopterRunner(Runner):
         )
 
     @torch.no_grad()
+    def render(self):
+        """Visualize the env."""
+        envs = self.envs
+        envs.render("human")
+        
+        for episode in range(self.all_args.render_episodes):
+            obs = envs.reset()
+
+            rnn_states = np.zeros(
+                (self.n_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32
+            )
+            masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
+
+            episode_rewards = []
+            
+            for step in range(self.episode_length):
+                self.trainer.prep_rollout()
+                action, rnn_states = self.trainer.policy.act(
+                    np.concatenate(obs),
+                    np.concatenate(rnn_states),
+                    np.concatenate(masks),
+                    deterministic=True
+                )
+                actions = np.array(np.split(_t2n(action), self.n_rollout_threads))
+                rnn_states = np.array(np.split(_t2n(rnn_states), self.n_rollout_threads))
+                actions_env = actions
+
+                # Obser reward and next obs
+                obs, rewards, dones, infos = envs.step(actions_env)
+                episode_rewards.append(rewards)
+
+                rnn_states[dones == True] = np.zeros(
+                    ((dones == True).sum(), self.recurrent_N, self.hidden_size),
+                    dtype=np.float32
+                )
+                masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
+                masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
+
+            print("average episode rewards is: " + str(np.mean(np.sum(np.array(episode_rewards), axis=0))))
+
+    @torch.no_grad()
     def eval(self, total_num_steps):
         eval_episode_rewards = []
         eval_obs = self.eval_envs.reset()
@@ -151,17 +181,7 @@ class QuadcopterRunner(Runner):
             eval_actions = np.array(np.split(_t2n(eval_action), self.n_eval_rollout_threads))
             eval_rnn_states = np.array(np.split(_t2n(eval_rnn_states), self.n_eval_rollout_threads))
             
-            if self.eval_envs.action_space(0).__class__.__name__ == 'MultiDiscrete':
-                for i in range(self.eval_envs.action_space(0).shape):
-                    eval_uc_actions_env = np.eye(self.eval_envs.action_space(0).high[i]+1)[eval_actions[:, :, i]]
-                    if i == 0:
-                        eval_actions_env = eval_uc_actions_env
-                    else:
-                        eval_actions_env = np.concatenate((eval_actions_env, eval_uc_actions_env), axis=2)
-            elif self.eval_envs.action_space(0).__class__.__name__ == 'Discrete':
-                eval_actions_env = np.squeeze(np.eye(self.eval_envs.action_space(0).n)[eval_actions], 2)
-            else:
-                raise NotImplementedError
+            eval_actions_env = eval_actions
 
             # Obser reward and next obs
             eval_obs, eval_rewards, eval_dones, eval_infos = self.eval_envs.step(eval_actions_env)
@@ -178,67 +198,3 @@ class QuadcopterRunner(Runner):
         print("eval average episode rewards of agent: " + str(eval_average_episode_rewards))
         self.log_env(eval_env_infos, total_num_steps)
 
-    @torch.no_grad()
-    def render(self):
-        """Visualize the env."""
-        envs = self.envs
-        
-        all_frames = []
-        for episode in range(self.all_args.render_episodes):
-            obs = envs.reset()
-            if self.all_args.save_gifs:
-                image = envs.render('rgb_array')[0][0]
-                all_frames.append(image)
-            else:
-                envs.render('human')
-
-            rnn_states = np.zeros((self.n_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
-            masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
-            
-            episode_rewards = []
-            
-            for step in range(self.episode_length):
-                calc_start = time.time()
-
-                self.trainer.prep_rollout()
-                action, rnn_states = self.trainer.policy.act(np.concatenate(obs),
-                                                    np.concatenate(rnn_states),
-                                                    np.concatenate(masks),
-                                                    deterministic=True)
-                actions = np.array(np.split(_t2n(action), self.n_rollout_threads))
-                rnn_states = np.array(np.split(_t2n(rnn_states), self.n_rollout_threads))
-
-                if envs.action_space(0).__class__.__name__ == 'MultiDiscrete':
-                    for i in range(envs.action_space(0).shape):
-                        uc_actions_env = np.eye(envs.action_space(0).high[i]+1)[actions[:, :, i]]
-                        if i == 0:
-                            actions_env = uc_actions_env
-                        else:
-                            actions_env = np.concatenate((actions_env, uc_actions_env), axis=2)
-                elif envs.action_space(0).__class__.__name__ == 'Discrete':
-                    actions_env = np.squeeze(np.eye(envs.action_space(0).n)[actions], 2)
-                else:
-                    raise NotImplementedError
-
-                # Obser reward and next obs
-                obs, rewards, dones, infos = envs.step(actions_env)
-                episode_rewards.append(rewards)
-
-                rnn_states[dones == True] = np.zeros(((dones == True).sum(), self.recurrent_N, self.hidden_size), dtype=np.float32)
-                masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
-                masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
-
-                if self.all_args.save_gifs:
-                    image = envs.render('rgb_array')[0][0]
-                    all_frames.append(image)
-                    calc_end = time.time()
-                    elapsed = calc_end - calc_start
-                    if elapsed < self.all_args.ifi:
-                        time.sleep(self.all_args.ifi - elapsed)
-                else:
-                    envs.render('human')
-
-            print("average episode rewards is: " + str(np.mean(np.sum(np.array(episode_rewards), axis=0))))
-
-        if self.all_args.save_gifs:
-            imageio.mimsave(str(self.gif_dir) + '/render.gif', all_frames, duration=self.all_args.ifi)

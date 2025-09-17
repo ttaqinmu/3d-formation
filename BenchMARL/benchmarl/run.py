@@ -8,7 +8,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-from .hydra_config import load_experiment_from_hydra
+from benchmarl.hydra_config import load_experiment_from_hydra
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")

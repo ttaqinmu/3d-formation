@@ -13,18 +13,34 @@ from onpolicy.envs.env_wrappers import SubprocVecEnv
 """Train script for MPEs."""
 
 def make_train_env(all_args):
-    return SubprocVecEnv([MultiQuadcopterFormation for i in range(all_args.n_training_threads)])
+    def get_env():
+        filename = all_args.formation_filename
+        return MultiQuadcopterFormation.from_json(
+            filename=filename,
+            control_mode=all_args.control_mode,
+        )
+
+    return SubprocVecEnv([get_env for _ in range(all_args.n_training_threads)])
 
 
 def make_eval_env(all_args):
-    return SubprocVecEnv([MultiQuadcopterFormation for i in range(all_args.n_eval_rollout_threads)])
+    def get_env():
+        return MultiQuadcopterFormation(
+            num_targets=all_args.num_agents,
+            control_mode=all_args.control_mode,
+        )
+    return SubprocVecEnv([get_env for _ in range(all_args.n_eval_rollout_threads)])
 
 
 def parse_args(args, parser):
+    parser.add_argument('--formation_filename', type=str,
+                        default='simple_spread', help="Which scenario to run on")
     parser.add_argument('--scenario_name', type=str,
                         default='simple_spread', help="Which scenario to run on")
     parser.add_argument('--num_agents', type=int,
                         default=10, help="number of players")
+    parser.add_argument('--control_mode', type=int,
+                        default=-1, help="control mode")
 
     all_args = parser.parse_known_args(args)[0]
 
@@ -107,7 +123,10 @@ def main(args):
     }
 
     # run experiments
+    # if all_args.share_policy:
     from onpolicy.runner.shared.quadcopter_runner import QuadcopterRunner as Runner
+    # else:
+        # from onpolicy.runner.separated.quadcopter_runner import QuadcopterRunner as Runner
 
     runner = Runner(config)
     runner.run()
