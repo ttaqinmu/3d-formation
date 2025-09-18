@@ -8,23 +8,32 @@ from pathlib import Path
 import torch
 from onpolicy.config import get_config
 from onpolicy.envs.quadcopter_formation import MultiQuadcopterFormation
-from onpolicy.envs.env_wrappers import DummyVecEnv
+from onpolicy.envs.env_wrappers import DummyVecEnv, ShareSubprocVecEnv
 
 
 def make_render_env(all_args):
     def get_env():
-        filename = all_args.formation_filename
-        # return MultiQuadcopterFormation.from_json(
-        #     filename,
-        #     all_args.control_mode,
-        #     "human"
-        # )
-        return MultiQuadcopterFormation(
-            num_targets=all_args.num_agents,
-            render="human",
-        )
+        if all_args.scenario_name == "random":
+            return MultiQuadcopterFormation(
+                num_targets=all_args.num_agents,
+                control_mode=all_args.control_mode,
+                random_when_reset=True,
+                render="human"
+            )
 
-    return DummyVecEnv([get_env])
+        filename = all_args.formation_filename
+        return MultiQuadcopterFormation.from_json(
+            filename,
+            all_args.control_mode,
+            "human"
+        )
+        # return MultiQuadcopterFormation(
+        #     num_targets=all_args.num_agents,
+        #     render="human",
+        #     control_mode=all_args.control_mode,
+        # )
+
+    return ShareSubprocVecEnv([get_env])
 
 
 def parse_args(args, parser):

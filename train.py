@@ -8,19 +8,27 @@ from pathlib import Path
 import torch
 from onpolicy.config import get_config
 from onpolicy.envs.quadcopter_formation import MultiQuadcopterFormation
-from onpolicy.envs.env_wrappers import SubprocVecEnv
+from onpolicy.envs.env_wrappers import ShareSubprocVecEnv
 
 """Train script for MPEs."""
 
 def make_train_env(all_args):
     def get_env():
         filename = all_args.formation_filename
+        
+        if all_args.scenario_name == "random":
+            return MultiQuadcopterFormation(
+                num_targets=all_args.num_agents,
+                control_mode=all_args.control_mode,
+                random_when_reset=True,
+            )
+
         return MultiQuadcopterFormation.from_json(
             filename=filename,
             control_mode=all_args.control_mode,
         )
 
-    return SubprocVecEnv([get_env for _ in range(all_args.n_training_threads)])
+    return ShareSubprocVecEnv([get_env for _ in range(all_args.n_training_threads)])
 
 
 def make_eval_env(all_args):
@@ -29,7 +37,7 @@ def make_eval_env(all_args):
             num_targets=all_args.num_agents,
             control_mode=all_args.control_mode,
         )
-    return SubprocVecEnv([get_env for _ in range(all_args.n_eval_rollout_threads)])
+    return ShareSubprocVecEnv([get_env for _ in range(all_args.n_eval_rollout_threads)])
 
 
 def parse_args(args, parser):
@@ -77,6 +85,8 @@ def main(args):
     if not run_dir.exists():
         os.makedirs(str(run_dir))
 
+    # all_args.use_wandb = False
+
     # wandb
     if all_args.use_wandb:
         run = wandb.init(config=all_args,
@@ -109,8 +119,9 @@ def main(args):
     np.random.seed(all_args.seed)
 
     # env init
+    all_args.use_eval = False
     envs = make_train_env(all_args)
-    eval_envs = make_eval_env(all_args)
+    eval_envs = None
     num_agents = all_args.num_agents
 
     config = {

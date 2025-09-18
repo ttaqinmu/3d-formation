@@ -63,41 +63,40 @@ class Runner(object):
             if not os.path.exists(self.save_dir):
                 os.makedirs(self.save_dir)
 
-        if self.algorithm_name == "mat" or self.algorithm_name == "mat_dec":
-            from onpolicy.algorithms.mat.mat_trainer import MATTrainer as TrainAlgo
-            from onpolicy.algorithms.mat.algorithm.transformer_policy import TransformerPolicy as Policy
-        else:
-            from onpolicy.algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
-            from onpolicy.algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
+        
+        from onpolicy.algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
+        from onpolicy.algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 
-        share_observation_space = self.envs.share_observation_space[0] if self.use_centralized_V else self.envs.observation_space(0)
+        share_observation_space = self.envs.share_observation_space
 
         print("obs_space: ", self.envs.observation_space)
         print("share_obs_space: ", self.envs.share_observation_space)
         print("act_space: ", self.envs.action_space)
         
         # policy network
-        if self.algorithm_name == "mat" or self.algorithm_name == "mat_dec":
-            self.policy = Policy(self.all_args, self.envs.observation_space(0), share_observation_space, self.envs.action_space(0), self.num_agents, device = self.device)
-        else:
-            self.policy = Policy(self.all_args, self.envs.observation_space(0), share_observation_space, self.envs.action_space(0), device = self.device)
+        
+        self.policy = Policy(
+            self.all_args,
+            self.envs.observation_space(0),
+            share_observation_space,
+            self.envs.action_space(0),
+            device = self.device
+        )
 
         if self.model_dir is not None:
             self.restore(self.model_dir)
 
         # algorithm
-        if self.algorithm_name == "mat" or self.algorithm_name == "mat_dec":
-            self.trainer = TrainAlgo(self.all_args, self.policy, self.num_agents, device = self.device)
-        else:
-            self.trainer = TrainAlgo(self.all_args, self.policy, device = self.device)
+        self.trainer = TrainAlgo(self.all_args, self.policy, device = self.device)
         
         # buffer
-        self.buffer = SharedReplayBuffer(self.all_args,
-                                        self.num_agents,
-                                        self.envs.observation_space(0),
-                                        share_observation_space,
-                                        self.envs.action_space(0)
-                                        )
+        self.buffer = SharedReplayBuffer(
+            self.all_args,
+            self.num_agents,
+            self.envs.observation_space(0),
+            share_observation_space,
+            self.envs.action_space(0),
+        )
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
@@ -122,15 +121,13 @@ class Runner(object):
     def compute(self):
         """Calculate returns for the collected data."""
         self.trainer.prep_rollout()
-        if self.algorithm_name == "mat" or self.algorithm_name == "mat_dec":
-            next_values = self.trainer.policy.get_values(np.concatenate(self.buffer.share_obs[-1]),
-                                                        np.concatenate(self.buffer.obs[-1]),
-                                                        np.concatenate(self.buffer.rnn_states_critic[-1]),
-                                                        np.concatenate(self.buffer.masks[-1]))
-        else:
-            next_values = self.trainer.policy.get_values(np.concatenate(self.buffer.share_obs[-1]),
-                                                        np.concatenate(self.buffer.rnn_states_critic[-1]),
-                                                        np.concatenate(self.buffer.masks[-1]))
+        
+        next_values = self.trainer.policy.get_values(
+            np.concatenate(self.buffer.share_obs[-1]),
+            np.concatenate(self.buffer.rnn_states_critic[-1]),
+            np.concatenate(self.buffer.masks[-1])
+        )
+        
         next_values = np.array(np.split(_t2n(next_values), self.n_rollout_threads))
         self.buffer.compute_returns(next_values, self.trainer.value_normalizer)
     
