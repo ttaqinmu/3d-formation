@@ -59,10 +59,15 @@ class QuadcopterRunner(Runner):
                 self.eval(total_num_steps)
 
     def log_env(self, env_infos: tuple, total_num_steps):
+        if not self.use_wandb:
+            return
+
         env_info = env_infos[0]
         closest_distance = 0.0
         target_reached = 0
         crowding = 0
+        collision = 0
+        approach_same_target = 0
 
         for i in range(self.num_agents):
             k = f'uav_{i}'
@@ -74,6 +79,12 @@ class QuadcopterRunner(Runner):
             if d["target_reached"]:
                 target_reached += 1
 
+            if d["collision"]:
+                collision += 1
+
+            if d["approach_same_target"]:
+                approach_same_target += 1
+
             closest_distance += d["closest_distance_to_target"]
 
         wandb.log(
@@ -81,6 +92,8 @@ class QuadcopterRunner(Runner):
                 "closest_distance": np.mean(closest_distance),
                 "crowding": crowding,
                 "target_reached": target_reached,
+                "collision": collision,
+                "approach_same_target": approach_same_target
             },
             step=total_num_steps
         )

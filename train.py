@@ -85,7 +85,7 @@ def main(args):
     if not run_dir.exists():
         os.makedirs(str(run_dir))
 
-    # all_args.use_wandb = False
+    all_args.use_wandb = True
 
     # wandb
     if all_args.use_wandb:
