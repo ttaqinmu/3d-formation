@@ -41,7 +41,7 @@ class ACTLayer(nn.Module):
             self.action_outs = nn.ModuleList([DiagGaussian(inputs_dim, continous_dim, use_orthogonal, gain), Categorical(
                 inputs_dim, discrete_dim, use_orthogonal, gain)])
     
-    def forward(self, x, available_actions=None, deterministic=False):
+    def forward(self, x, available_actions=None, deterministic=False, supervised=False):
         """
         Compute actions and action logprobs from given input.
         :param x: (torch.Tensor) input to network.
@@ -80,8 +80,13 @@ class ACTLayer(nn.Module):
 
         elif self.mujoco_box:
             action_logits = self.action_out(x)
-            actions = action_logits.mode() if deterministic else action_logits.sample() 
-            action_log_probs = action_logits.log_probs(actions)
+
+            if supervised:
+                actions = action_logits.mean
+                action_log_probs = action_logits.log_probs(actions)
+            else:
+                actions = action_logits.mode() if deterministic else action_logits.sample() 
+                action_log_probs = action_logits.log_probs(actions)
         
         else:
             action_logits = self.action_out(x, available_actions)

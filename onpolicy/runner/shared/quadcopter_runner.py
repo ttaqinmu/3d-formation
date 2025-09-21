@@ -5,7 +5,9 @@ import torch
 from onpolicy.runner.shared.base_runner_quad import Runner
 
 def _t2n(x):
-    return x.detach().cpu().numpy()
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return x
 
 class QuadcopterRunner(Runner):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
@@ -62,38 +64,50 @@ class QuadcopterRunner(Runner):
         if not self.use_wandb:
             return
 
-        env_info = env_infos[0]
-        closest_distance = 0.0
-        target_reached = 0
-        crowding = 0
-        collision = 0
-        approach_same_target = 0
+        closest_distance = []
+        target_reached = [0]
+        crowding = [0]
+        collision = [0]
+        approach_same_target = [0]
+        
+        
+        for n in range(len(env_infos)):
+            env_info = env_infos[n]
+            tr = 0
+            cr = 0
+            cl = 0
+            ast = 0
 
-        for i in range(self.num_agents):
-            k = f'uav_{i}'
-            d = env_info[k]
+            for i in range(self.num_agents):
+                k = f'uav_{i}'
+                d = env_info[k]
 
-            if d["crowding"]:
-                crowding += 1
+                if d["crowding"]:
+                    cr += 1
 
-            if d["target_reached"]:
-                target_reached += 1
+                if d["target_reached"]:
+                    tr += 1
 
-            if d["collision"]:
-                collision += 1
+                if d["collision"]:
+                    cl += 1
 
-            if d["approach_same_target"]:
-                approach_same_target += 1
+                if d["approach_same_target"]:
+                    ast += 1
 
-            closest_distance += d["closest_distance_to_target"]
+                closest_distance.append(d["closest_distance_to_target"])
+
+            target_reached.append(tr / self.num_agents)
+            crowding.append(cr / self.num_agents)
+            collision.append(cl / self.num_agents)
+            approach_same_target.append(ast / self.num_agents)
 
         wandb.log(
             {
                 "closest_distance": np.mean(closest_distance),
-                "crowding": crowding,
-                "target_reached": target_reached,
-                "collision": collision,
-                "approach_same_target": approach_same_target
+                "crowding": np.mean(crowding),
+                "target_reached": np.mean(target_reached),
+                "collision": np.mean(collision),
+                "approach_same_target": np.mean(approach_same_target)
             },
             step=total_num_steps
         )
