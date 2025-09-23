@@ -27,25 +27,37 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 import torch.optim as optim
 
 
-components = [
+obs_components = [
     "vp", "vq", "vr",       # angular velocity
     "p", "q", "r",          # roll pitch yaw
     "u", "v", "w",          # local linear velocity
     "x", "y", "z",          # position global
-    "ca_x1", "ca_y1", "ca_z1",  # closest agent
-    "ca_x2", "ca_y2", "ca_z2",
-    "ca_x3", "ca_y3", "ca_z3",
     "ct_x1", "ct_y1", "ct_z1",  # closest target
     "ct_x2", "ct_y2", "ct_z2",
     "ct_x3", "ct_y3", "ct_z3",
+    "ca_x1", "ca_y1", "ca_z1",  # closest agent
+    "ca_x2", "ca_y2", "ca_z2",
+    "ca_x3", "ca_y3", "ca_z3",
 ]
 
 
 data: Dict[str, List[Any]] = {
-    "a_u": [],
-    "a_v": [],
-    "a_vr": [],
-    "a_z": [],
+    "m4_a1": [],
+    "m4_a2": [],
+    "m4_a3": [],
+    "m4_a4": [],
+    "m5_a1": [],
+    "m5_a2": [],
+    "m5_a3": [],
+    "m5_a4": [],
+    "m6_a1": [],
+    "m6_a2": [],
+    "m6_a3": [],
+    "m6_a4": [],
+    "m7_a1": [],
+    "m7_a2": [],
+    "m7_a3": [],
+    "m7_a4": [],
     "num_agents": [],
     "start_pos": [],
     "target_pos": [],
@@ -58,7 +70,7 @@ data: Dict[str, List[Any]] = {
 }
 
 
-for comp in components:
+for comp in obs_components:
     data[comp] = []
 
 
@@ -101,9 +113,8 @@ def assingment_strategy(start_pos: np.ndarray, target_pos: np.ndarray) -> list:
 
 
 def collect_data(outfile="dataset.csv"):
-    action_mode = 4
     max_step = 1000
-    max_episode = 100
+    max_episode = 200
 
     for episode in range(max_episode):
         num_agents = randint(5,10)
@@ -112,7 +123,9 @@ def collect_data(outfile="dataset.csv"):
             num_targets=num_agents,
             control_mode=7,
             random_when_reset=True,
-            render=None
+            render=None,
+            max_target_neighbor=3,
+            max_agent_neighbor=3,
         )
 
         obs, _, _, = env.reset()
@@ -129,7 +142,7 @@ def collect_data(outfile="dataset.csv"):
             }
 
             for i in range(num_agents):
-                for o, comp in enumerate(components):
+                for o, comp in enumerate(obs_components):
                     data[comp].append(obs[i][o])
 
                 data["num_agents"].append(num_agents)
@@ -147,11 +160,13 @@ def collect_data(outfile="dataset.csv"):
                 data["reward"].append(rews[i])
 
                 body_id = env.aviary.drones[i].Id
-                actions = get_action(body_id, action_mode)
-                data["a_u"].append(actions[0])
-                data["a_v"].append(actions[1])
-                data["a_vr"].append(actions[2])
-                data["a_z"].append(actions[3])
+
+                for am in [4,5,6,7]:
+                    actions = get_action(body_id, am)
+                    data[f"m{am}_a1"].append(actions[0])
+                    data[f"m{am}_a2"].append(actions[1])
+                    data[f"m{am}_a3"].append(actions[2])
+                    data[f"m{am}_a4"].append(actions[3])
 
 
         print(f"Episode {episode+1}/{max_episode} collected.")
@@ -162,15 +177,15 @@ def collect_data(outfile="dataset.csv"):
     df.to_csv(outfile, index=False)
 
 
-def train(args, infile="dataset.csv", outfile="pretrained_actor.pth"):
+def train(args, infile="dataset.csv", outfile="pretrained_actor.pth", m=4):
     df = pd.read_csv(infile, header=0, index_col=False)
 
-    obs = Box(-np.inf, np.inf, shape=(len(components),), dtype=np.float32)
+    obs = Box(-np.inf, np.inf, shape=(len(obs_components),), dtype=np.float32)
     action = Box(-np.inf, np.inf, shape=(4,), dtype=np.float32)
 
     dataset = TensorDataset(
-        torch.tensor(df[components].to_numpy(), dtype=torch.float32),
-        torch.tensor(df[["x", "y", "r", "z"]].to_numpy(), dtype=torch.float32)
+        torch.tensor(df[obs_components].to_numpy(), dtype=torch.float32),
+        torch.tensor(df[[f"m{m}_a1", f"m{m}_a2", f"m{m}_a3", f"m{m}_a4"]].to_numpy(), dtype=torch.float32)
     )
 
     print(len(dataset))
@@ -184,7 +199,7 @@ def train(args, infile="dataset.csv", outfile="pretrained_actor.pth"):
 
     device = torch.device("cuda")
     actor = R_Actor(args, obs, action, device)
-    
+
     criterion = torch.nn.MSELoss()
     optimizer = optim.Adam(actor.parameters(), lr=1e-3)
 
@@ -231,42 +246,50 @@ def train(args, infile="dataset.csv", outfile="pretrained_actor.pth"):
     torch.save(actor.state_dict(), outfile)
 
 
-def test(args, inputfile):
+def test(args, inputfile, m):
     state_dict = torch.load(inputfile)
 
-    obs = Box(-np.inf, np.inf, shape=(len(components),), dtype=np.float32)
+    obs = Box(-np.inf, np.inf, shape=(len(obs_components),), dtype=np.float32)
     action = Box(-np.inf, np.inf, shape=(4,), dtype=np.float32)
+
+    # env = MultiQuadcopterFormation.from_json(
+    #     "debug.json",
+    #     m,
+    #     "human"
+    # )
 
     env = MultiQuadcopterFormation(
         num_targets=5,
-        control_mode=7,
+        control_mode=m,
         render="human",
+        max_agent_neighbor=3,
+        max_target_neighbor=3,
     )
 
     actor = R_Actor(args, obs, action, torch.device("cuda"))
+    actor.load_state_dict(state_dict)
     actor.eval()
 
     obs, _, _, = env.reset()
     
     with torch.no_grad():
-        for step in range(500):
+        for step in range(5000):
             actions = {}
             for i in range(env.num_agents):
                 o = np.array(obs[i], dtype=np.float32)
                 o = torch.tensor(o).unsqueeze(0)
                 a, _, _ = actor(o, [], [], None, True)
                 a = a.squeeze(0).detach().to("cpu").numpy()
-                actions[f"uav_{i}"] = a * 100
-
-                for o, comp in enumerate(components):
-                    data[comp].append(obs[i][o])
-
-            if step % 10 == 0:
-                print("output: ", actions["uav_0"])
-                print("real: ", data["x"][-1], data["y"][-1], data["r"][-1], data["z"][-1])
+                actions[f"uav_{i}"] = a
 
             # print(actions)
             obs, _, rews, _, infos, [] = env.step(actions)
+
+            if step % 100 == 0:
+                # print("target: ", env.target_pos)
+                # print("obs: ", obs)
+                print("output: ", actions["uav_0"])
+                # print("infos: ", infos)
 
 
 class Args:
@@ -276,14 +299,14 @@ class Args:
         self.use_ReLU = True
         self.stacked_frames = 1
         self.layer_N = 2
-        self.hidden_size = 256
-        self.gain = 0.01
+        self.hidden_size = 64
+        self.gain = 1
         self.use_policy_active_masks = False
         self.use_naive_recurrent_policy = False
         self.use_recurrent_policy = False
         self.recurrent_N = 1
-        self.algorithm_name = "rmappo"
+        self.algorithm_name = "mappo"
 
-# collect_data("dataset_1.csv")
-# train(Args(), "dataset_1.csv", "actor_1.pth")
-test(Args(), "actor_1.pth")
+# collect_data("dataset_all_2.csv")
+# train(Args(), "dataset_all_2.csv", "actor_m7.pth", 7)
+# test(Args(), "actor_m7.pth", 7)

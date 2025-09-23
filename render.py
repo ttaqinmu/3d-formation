@@ -18,7 +18,7 @@ def make_render_env(all_args):
                 num_targets=all_args.num_agents,
                 control_mode=all_args.control_mode,
                 random_when_reset=True,
-                render="human"
+                render="human",
             )
 
         filename = all_args.formation_filename

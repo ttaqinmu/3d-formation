@@ -6,7 +6,7 @@ from PyFlyt.pz_envs.quadx_envs.ma_quadx_base_env import MAQuadXBaseEnv
 from PyFlyt.core.aviary import Aviary
 from typing import List, Any, Optional
 from gymnasium.spaces import Box, Space, Discrete
-from random import randint
+from random import randint, uniform
 from .utils import minmax_scale, array_zfill
 
 
@@ -19,19 +19,18 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
     def random_start_pos(cls, num_agents: int) -> np.ndarray:
         pos = []
         for _ in range(num_agents):
-            x = np.random.uniform(-3, 3)
-            y = np.random.uniform(-3, 3)
-            z = 0.1
-            pos.append([x, y, z])
+            x = uniform(-2, 2)
+            y = uniform(-2, 2)
+            pos.append([x, y, 0.1])
         return np.array(pos)
 
     @classmethod
     def random_target_pos(cls, num_targets: int) -> np.ndarray:
         pos = []
         for _ in range(num_targets):
-            x = np.random.uniform(-3, 3)
-            y = np.random.uniform(-3, 3)
-            z = np.random.uniform(1, 2)
+            x = uniform(-2,2)
+            y = uniform(-2,2)
+            z = uniform(1,2)
             pos.append([x, y, z])
         return np.array(pos)
 
@@ -85,8 +84,8 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         control_mode: int = -1,
         targets_pos: Optional[np.ndarray] = None,
         starts_pos: Optional[np.ndarray] = None,
-        max_target_neighbor: int = 3,
-        max_agent_neighbor: int = 3,
+        max_target_neighbor: int = 1,
+        max_agent_neighbor: int = 1,
         max_duration_seconds: int = 60,
         max_doom_size: float = 10.0,
         render: Optional[str] = None,
@@ -128,8 +127,8 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
             self._action_space = Discrete(max_target_neighbor)
         elif control_mode == 8:
             self._action_space = Box(low=-np.pi, high=np.pi, shape=(3,), dtype=np.float64)
-
-        self.sparse_reward = False
+        elif control_mode == 10:
+            self._action_space = Discrete(4)
 
         self.max_distance = np.linalg.norm(
             np.full(3, self.max_doom_size) - np.full(3, -self.max_doom_size)
@@ -146,7 +145,10 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         ]
 
         self.n = num_agents
-        num_obs = 3 * 4 + (max_target_neighbor * 3) + (max_agent_neighbor * 3)
+        num_obs = (
+            3 * 4 + 
+            (max_target_neighbor * 3) + (max_agent_neighbor * 3)
+        )
 
         self.agent_info = [
             dict(
@@ -181,11 +183,19 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
 
         self.file_dir = os.path.dirname(os.path.realpath(__file__))
 
+        self.aviary = Aviary(
+            start_pos=self.start_pos,
+            start_orn=self.start_orn,
+            drone_type="quadx",
+            render=bool(self.render_mode),
+        )
+
     def setup_gui(self):
         if self.render_mode is None:
             return
 
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
         floor_col = p.createCollisionShape(p.GEOM_PLANE)
         floor_vis = p.createVisualShape(
             p.GEOM_BOX,
@@ -211,13 +221,6 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
                     globalScaling=0.05,
                 )
             )
-
-        for i, visual in enumerate(self.target_visual):
-            p.changeVisualShape(
-                visual,
-                linkIndex=-1,
-                rgbaColor=(0, 1 - (i / len(self.target_visual)), 0, 1),
-            )
     
     def observation_space(self, agent: Any = None) -> Space:
         return self._observation_space
@@ -225,8 +228,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
     def reset(  # type: ignore
         self, seed=None, options=dict()
     ):
-        if hasattr(self, "aviary"):
-            self.aviary.disconnect()
+        self.aviary.reset()
 
         self.step_count = 0
         self.agents = [
@@ -238,16 +240,6 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
             self.start_pos = self.random_start_pos(self.num_agents)
         else:
             self.target_pos, self.start_pos = self.get_random_pos()
-
-        # rebuild the environment
-        self.aviary = Aviary(
-            start_pos=self.start_pos,
-            start_orn=self.start_orn,
-            drone_type="quadx",
-            render=bool(self.render_mode),
-            drone_options=options,
-            seed=seed,
-        )
 
         self.agent_info = [
             dict(
@@ -300,7 +292,6 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         - relative to closest target 3 * neighbors
         - relative to closest agent 3 * neighbors
         """
-        self.update_agent_info(agent_id)
 
         raw_state = self.aviary.state(agent_id)
         # aux_state = self.aviary.aux_state(agent_id)
@@ -315,11 +306,16 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         rel_pos_target = []
         target_indexes = self.agent_info[agent_id]["distance_to_target"].argsort()
         for index in target_indexes:
+            if len(rel_pos_target) >= self.max_target_neighbor:
+                continue
+
             if (
-                len(rel_pos_target) < self.max_target_neighbor
-                and self.target_info[index]["reached"] != True
+                self.target_info[index]["reached"]
+                and self.target_info[index]["nearest_agent_id"] != agent_id
             ):
-                rel_pos_target.append(self.target_pos[index])
+                continue
+
+            rel_pos_target.append(self.target_pos[index] - lin_pos)
 
         rel_pos_target = array_zfill(
             np.array(rel_pos_target).flatten(),
@@ -329,30 +325,29 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
 
         # Relative to other agent
         rel_pos_agent = []
-        agent_indexes = self.agent_info[agent_id]["distance_to_agent"].argsort()[:self.max_agent_neighbor]
+        agent_indexes = self.agent_info[agent_id]["distance_to_agent"].argsort()
         rel_pos_agent = []
         for index in agent_indexes:
-            if index != agent_id:
-                rel_pos_agent.append(self.aviary.state(index)[3])
-            else:
-                rel_pos_agent.append([self.max_doom_size, self.max_doom_size, self.max_doom_size])
+            if (
+                index != agent_id
+                and len(rel_pos_agent) < self.max_agent_neighbor
+            ):
+                rel_pos_agent.append(self.aviary.state(index)[3] - lin_pos)
 
         rel_pos_agent = array_zfill(
             np.array(rel_pos_agent).flatten(),
-            self.max_target_neighbor * 3,
+            self.max_agent_neighbor * 3,
             self.max_doom_size,
         )
 
         return np.concatenate(
             [
-                ang_vel,  # 3
-                ang_pos,  # 3
-                lin_vel,  # 3
-                lin_pos,  # 3
-                rel_pos_target,  # 3 * target
-                rel_pos_agent,  # 3 * agents
-                # self.past_actions[agent_id],
-                # self.start_pos[agent_id],
+                ang_vel,
+                ang_pos,
+                lin_vel,
+                lin_pos,
+                rel_pos_target,  # 3 * max target neighbors
+                rel_pos_agent,  # 3 * max agents neighbors
             ],
             axis=-1,
         )
@@ -387,47 +382,66 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         result = np.concatenate(obs, axis=-1)
         return result
 
-    def update_agent_info(self, agent_id: int) -> None:
-        agent_pos = self.aviary.state(agent_id)[3]
-        distance_to_target = []
-        distance_to_agent = []
+    def update_info(self) -> None:
+        reached_target_id = []
 
-        min_dist = np.inf
+        for agent_id in range(self.n):
+            agent_pos = self.aviary.state(agent_id)[3]
+            distance_to_target = []
+            distance_to_agent = []
 
-        is_reach_target = False
+            min_dist = np.inf
 
-        for target_index, target in enumerate(self.target_pos):
-            self.target_info[target_index]["reached"] = False
-            dist = np.linalg.norm(agent_pos - target)
+            is_reach_target = False
 
-            distance_to_target.append(dist)
-            self.target_info[target_index]["distance_to_agent"][agent_id] = dist  # type: ignore
+            for target_index, target in enumerate(self.target_pos):
+                dist = np.linalg.norm(agent_pos - target)
 
-            if dist < min_dist:
-                min_dist = dist
-                self.agent_info[agent_id]["nearest_target_id"] = target_index
+                distance_to_target.append(dist)
+                self.target_info[target_index]["distance_to_agent"][agent_id] = dist  # type: ignore
 
-            if dist <= self.target_info[target_index]["distance_to_agent"].min():  # type: ignore
-                self.target_info[target_index]["nearest_agent_id"] = agent_id
+                if dist < min_dist:
+                    min_dist = dist
+                    self.agent_info[agent_id]["nearest_target_id"] = target_index
 
-            if (
-                dist <= 0.1
-                and self.target_info[target_index]["nearest_agent_id"] == agent_id
-            ):
-                is_reach_target = True
+                if dist <= self.target_info[target_index]["distance_to_agent"].min():  # type: ignore
+                    self.target_info[target_index]["nearest_agent_id"] = agent_id
+
+                if (
+                    dist <= 0.1
+                    and self.target_info[target_index]["nearest_agent_id"] == agent_id
+                ):
+                    is_reach_target = True
+                    reached_target_id.append(target_index)
+
+            for index in range(self.n):
+                if index == agent_id:
+                    distance_to_agent.append(self.max_distance)
+                    continue
+
+                other_pos = self.aviary.state(index)[3]
+                dist = np.linalg.norm(agent_pos - other_pos)
+                distance_to_agent.append(dist)
+
+            self.agent_info[agent_id]["reached_target"] = is_reach_target
+            self.agent_info[agent_id]["distance_to_agent"] = np.array(distance_to_agent)  # type: ignore
+            self.agent_info[agent_id]["distance_to_target"] = np.array(distance_to_target)  # type: ignore
+
+        for target_index in range(len(self.target_pos)):
+            if target_index in reached_target_id:
                 self.target_info[target_index]["reached"] = True
-
-        for index in range(self.n):
-            if index == agent_id:
-                continue
-
-            other_pos = self.aviary.state(index)[3]
-            dist = np.linalg.norm(agent_pos - other_pos)
-            distance_to_agent.append(dist)
-
-        self.agent_info[agent_id]["reached_target"] = is_reach_target
-        self.agent_info[agent_id]["distance_to_agent"] = np.array(distance_to_agent)  # type: ignore
-        self.agent_info[agent_id]["distance_to_target"] = np.array(distance_to_target)  # type: ignore
+            #     p.changeVisualShape(
+            #         self.target_visual[target_index],
+            #         linkIndex=-1,
+            #         rgbaColor=(0.5, 0.9, 0.3, 0.6),
+            #     )
+            # else:
+            #     self.target_info[target_index]["reached"] = False
+            #     p.changeVisualShape(
+            #         self.target_visual[target_index],
+            #         linkIndex=-1,
+            #         rgbaColor=(1, 1, 1, 1),
+            #     )
 
     def compute_term_trunc_reward_info_by_id(
         self, agent_id: int
@@ -453,7 +467,7 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
 
         # All targets reached
         if all(t["reached"] for t in self.target_info):
-            reward += 5
+            reward += 3
             term |= True
             info["all_targets_reached"] = True
 
@@ -472,19 +486,18 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
         reward += 0.1 / d
 
         # Crowding
-        # distance_to_agent: list[int] = self.agent_info[agent_id]["distance_to_agent"]   # type: ignore
-        # count_crowd = sum([1 for d in distance_to_agent if d <= 0.5])
-        # if count_crowd > 0:
-        #     info["crowding"] = True
-        #     reward -= count_crowd * 0.05
+        distance_to_agent: list[int] = self.agent_info[agent_id]["distance_to_agent"]   # type: ignore
+        count_crowd = sum([1 for d in distance_to_agent if d <= 0.5])
+        if count_crowd > 0:
+            info["crowding"] = True
+            reward -= count_crowd * 0.05
 
         # Approach same target as another agent
-        # nearest_target_id = self.agent_info[agent_id]["nearest_target_id"]
-        # if nearest_target_id is not None:
-        #     if self.target_info[nearest_target_id]["nearest_agent_id"] != agent_id:
-        #         reward -= 0.15
-        #         info["approach_same_target"] = True
-        #         reward -= delta_position
+        nearest_target_id = self.agent_info[agent_id]["nearest_target_id"]
+        if nearest_target_id is not None:
+            if self.target_info[nearest_target_id]["nearest_agent_id"] != agent_id:
+                reward -= 0.2
+                info["approach_same_target"] = True
 
         # Collision
         if np.any(self.aviary.contact_array[self.aviary.drones[agent_id].Id]):
@@ -511,6 +524,13 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
             current_pos = self.aviary.state(agent_id)[3]
             current_pos += action
             return np.insert(current_pos, 2, 0)
+        elif self.control_mode == 10:
+            index = action.argmax()
+            if index == 3:
+                current_pos = self.aviary.state(agent_id)[3]
+                return np.insert(current_pos, 2, 0)
+            target_indexes = self.agent_info[agent_id]["distance_to_target"].argsort()[:self.max_target_neighbor]
+            return np.insert(self.target_pos[target_indexes[index]], 2, 0) 
         else:
             return action
 
@@ -561,6 +581,8 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
                 # compute observations
                 observations[ag] = self.compute_observation_by_id(ag_id)
 
+            self.update_info()
+
             share_obs = self.compute_share_observation()
 
         self.step_count += 1
@@ -569,6 +591,14 @@ class MultiQuadcopterFormation(MAQuadXBaseEnv):
             "agent": self.agent_info,
             "target": self.target_info,
         }
+
+        # if self.step_count % 100 == 0:
+        #     print(rewards)
+        #     print(observations)
+        #     print(self.agent_info)
+        #     print(self.target_info)
+        #
+        #     print("----")
 
         # return observations, share_obs, rewards, terminations, infos
 
