@@ -82,8 +82,8 @@ class ACTLayer(nn.Module):
             action_logits = self.action_out(x)
 
             if supervised:
-                actions = action_logits.mean
-                action_log_probs = action_logits.log_probs(actions)
+                actions = action_logits
+                action_log_probs = action_logits
             else:
                 actions = action_logits.mode() if deterministic else action_logits.sample() 
                 action_log_probs = action_logits.log_probs(actions)

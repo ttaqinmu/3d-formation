@@ -1,14 +1,14 @@
 #!/bin/sh
 env="MultiQuadcopter Formation"
 scenario="random" 
-num_agents=10
+formation_filename="random"
+num_agents=5
 algo="mappo"
 exp="render_1"
 seed_max=1
 run_dir="sukses"
-formation_filename="random"
 control_mode=7
-model_dir="/home/ttaqinmu/work/results/MultiQuadcopter/random/mappo/mode_7_reward_3/wandb/run-20250922_205434-14f1m583/files"
+model_dir="/home/ttaqinmu/work/results/MultiQuadcopter/random/mappo/mode_7_reward_1/wandb/run-20250924_202707-kbul1apf/files"
 
 echo "env is ${env}, scenario is ${scenario}, algo is ${algo}, exp is ${exp}, max seed is ${seed_max}"
 for seed in `seq ${seed_max}`;

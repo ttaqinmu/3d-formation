@@ -35,9 +35,11 @@ obs_components = [
     "ct_x1", "ct_y1", "ct_z1",  # closest target
     "ct_x2", "ct_y2", "ct_z2",
     "ct_x3", "ct_y3", "ct_z3",
+    "ct_x4", "ct_y4", "ct_z4",
     "ca_x1", "ca_y1", "ca_z1",  # closest agent
     "ca_x2", "ca_y2", "ca_z2",
     "ca_x3", "ca_y3", "ca_z3",
+    "acq_x1", "acq_y1", "acq_z1", "acq_x2",  # acquired target
 ]
 
 
@@ -106,15 +108,46 @@ def assingment_strategy(start_pos: np.ndarray, target_pos: np.ndarray) -> list:
 
     for i in range(n):
         for j in range(n):
-            cost_matrix[i, j] = np.linalg.norm(start_pos[i] - target_pos[j])
+            cost_matrix[i, j] = np.linalg.norm(target_pos[j] - start_pos[i])
 
     _, target_index = linear_sum_assignment(cost_matrix)
     return target_index
 
 
+def validate_strategy():
+    env = MultiQuadcopterFormation(
+        num_targets=5,
+        control_mode=7,
+        random_when_reset=True,
+        render="human",
+        max_target_neighbor=3,
+        max_agent_neighbor=3,
+    )
+
+    obs, _, _, = env.reset()
+
+    target_pos = env.target_pos
+    start_pos = env.start_pos
+
+    pairwise = assingment_strategy(start_pos, target_pos)
+
+    print(pairwise)
+
+    for step in range(1000):
+        actions = {
+            f"uav_{i}": np.insert(target_pos[pairwise[i]], 2, 0)
+            for i in range(len(start_pos))
+        }
+
+        obs, _, _, _, _, _ = env.step(actions)
+
+        # if step % 100 == 0:
+            # print(obs[0])
+
+
 def collect_data(outfile="dataset.csv"):
-    max_step = 1000
-    max_episode = 200
+    max_step = 500
+    max_episode = 1000
 
     for episode in range(max_episode):
         num_agents = randint(5,10)
@@ -177,15 +210,31 @@ def collect_data(outfile="dataset.csv"):
     df.to_csv(outfile, index=False)
 
 
-def train(args, infile="dataset.csv", outfile="pretrained_actor.pth", m=4):
+def train(args, infile="dataset.csv", outfile="pretrained_actor.pth", m=4, pretrain=None):
+    def compute_loss(dist, mean, expert_actions, alpha=0.5, beta=0.5):
+        mse_loss = torch.nn.MSELoss()(mean, expert_actions)
+        log_probs_expert = dist.log_probs(expert_actions)
+        logp = log_probs_expert.view(-1).mean()
+        nll_loss = -1* logp
+        total_loss = alpha * mse_loss + beta * nll_loss
+        return total_loss, mse_loss, nll_loss
+
+
     df = pd.read_csv(infile, header=0, index_col=False)
+    df['acq_x2'] = 0.5
+    df["ct_x4"] = 5
+    df["ct_y4"] = 5
+    df["ct_z4"] = 5
 
     obs = Box(-np.inf, np.inf, shape=(len(obs_components),), dtype=np.float32)
     action = Box(-np.inf, np.inf, shape=(4,), dtype=np.float32)
 
     dataset = TensorDataset(
         torch.tensor(df[obs_components].to_numpy(), dtype=torch.float32),
-        torch.tensor(df[[f"m{m}_a1", f"m{m}_a2", f"m{m}_a3", f"m{m}_a4"]].to_numpy(), dtype=torch.float32)
+        torch.tensor(
+            df[[f"m{m}_a1", f"m{m}_a2", f"m{m}_a3", f"m{m}_a4"]].to_numpy(), 
+            dtype=torch.float32
+        )
     )
 
     print(len(dataset))
@@ -200,29 +249,40 @@ def train(args, infile="dataset.csv", outfile="pretrained_actor.pth", m=4):
     device = torch.device("cuda")
     actor = R_Actor(args, obs, action, device)
 
+    if pretrain:
+        state_dict = torch.load(pretrain)
+        actor.load_state_dict(state_dict)
+
     criterion = torch.nn.MSELoss()
     optimizer = optim.Adam(actor.parameters(), lr=1e-3)
 
-    epochs = 20
-    total_loss = 0
+    epochs = 5
     for epoch in range(epochs):
         # ---- Training ----
         actor.train()
-        total_loss = 0
+        total, total_mse, total_nll = 0, 0, 0
         for batch_states, batch_actions in train_loader:
-            i = batch_states.to(device)
-            a, _, _ = actor(i, [], [], None, True)
-
-            o = batch_actions.to(device)
-            loss = criterion(a, o)
-
             optimizer.zero_grad()
+            
+            i = batch_states.to(device)
+            dist, _, _ = actor(
+                obs=i, 
+                rnn_states=[],
+                masks=[], 
+                available_actions=None, 
+                deterministic=False,
+                supervised=True
+            )
+            mean = dist.mean
+
+            loss, mse, nll = compute_loss(dist, mean.to(device), batch_actions.to(device), 0.5, 0.5)
+
             loss.backward()
             optimizer.step()
 
-            total_loss += loss.item()
-        
-        train_loss = total_loss / len(train_loader)
+            total += loss.item()
+            total_mse += mse.item()
+            total_nll += nll.item()
 
         # ---- Validation ----
         actor.eval()
@@ -238,10 +298,11 @@ def train(args, infile="dataset.csv", outfile="pretrained_actor.pth", m=4):
 
         val_loss /= len(val_loader)
 
-        print(f"Epoch {epoch+1}/{epochs} | "
-              f"Train Loss: {train_loss:.4f} | "
+        print(f"[Epoch {epoch+1}] "
+              f"Loss: {total/len(train_loader):.4f}, "
               f"Val Loss: {val_loss:.4f} | "
-              )
+              f"MSE: {total_mse/len(train_loader):.4f}, "
+              f"NLL: {total_nll/len(train_loader):.4f}")
 
     torch.save(actor.state_dict(), outfile)
 
@@ -259,31 +320,49 @@ def test(args, inputfile, m):
     # )
 
     env = MultiQuadcopterFormation(
-        num_targets=5,
+        num_targets=4,
         control_mode=m,
         render="human",
-        max_agent_neighbor=3,
-        max_target_neighbor=3,
     )
 
     actor = R_Actor(args, obs, action, torch.device("cuda"))
     actor.load_state_dict(state_dict)
     actor.eval()
 
+    pairwise = assingment_strategy(env.start_pos, env.target_pos)
+
     obs, _, _, = env.reset()
+
+    rew = 0
+
+    takeover = False
     
     with torch.no_grad():
         for step in range(5000):
             actions = {}
-            for i in range(env.num_agents):
-                o = np.array(obs[i], dtype=np.float32)
-                o = torch.tensor(o).unsqueeze(0)
-                a, _, _ = actor(o, [], [], None, True)
-                a = a.squeeze(0).detach().to("cpu").numpy()
-                actions[f"uav_{i}"] = a
+
+            if takeover:
+                for i in range(env.num_agents):
+                    actions[f"uav_{i}"] = np.insert(env.target_pos[pairwise[i]], 2, 0)
+            else:
+                for i in range(env.num_agents):
+                    o = np.array(obs[i], dtype=np.float32)
+                    o = torch.tensor(o).unsqueeze(0)
+                    a, _, _ = actor(
+                        obs=o, 
+                        rnn_states=[],
+                        masks=[], 
+                        available_actions=None, 
+                        deterministic=False,
+                        supervised=True,
+                    )
+                    a = a.mode().squeeze(0).detach().to("cpu").numpy()
+                    actions[f"uav_{i}"] = a
 
             # print(actions)
             obs, _, rews, _, infos, [] = env.step(actions)
+
+            rew += rews[0]
 
             if step % 100 == 0:
                 # print("target: ", env.target_pos)
@@ -291,6 +370,12 @@ def test(args, inputfile, m):
                 print("output: ", actions["uav_0"])
                 # print("infos: ", infos)
 
+            # if step > 300 and not takeover:
+                # print("takeover")
+                # takeover = True
+                # env.aviary.set_mode(7)
+
+    print("Total reward: ", rew)
 
 class Args:
     def __init__(self):
@@ -299,7 +384,7 @@ class Args:
         self.use_ReLU = True
         self.stacked_frames = 1
         self.layer_N = 2
-        self.hidden_size = 64
+        self.hidden_size = 128
         self.gain = 1
         self.use_policy_active_masks = False
         self.use_naive_recurrent_policy = False
@@ -307,6 +392,7 @@ class Args:
         self.recurrent_N = 1
         self.algorithm_name = "mappo"
 
-# collect_data("dataset_all_2.csv")
-# train(Args(), "dataset_all_2.csv", "actor_m7.pth", 7)
-# test(Args(), "actor_m7.pth", 7)
+# validate_strategy()
+# collect_data("dataset_all_2_big.csv")
+# train(Args(), "dataset_all_2_big.csv", "actor_m7.pth", 7, "actor.pt")
+test(Args(), "actor.pt",7)
